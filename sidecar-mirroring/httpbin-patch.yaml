@@ -1,0 +1,12 @@
+spec:
+  template:
+    spec:
+      containers:
+      - image: traceableai-docker-local-dev.jfrog.io/tmm/ta-tmm:latest
+        imagePullPolicy: IfNotPresent
+        name: ta
+        env:
+        - name: TA_REFRESH_TOKEN
+          value: 9jvHSsBwqlSMdQccRM1CRGdybrx1YIWuRnssIFT-XfS4J
+        - name: TA_ENVIRONMENT
+          value: tmm-sidecar-demo

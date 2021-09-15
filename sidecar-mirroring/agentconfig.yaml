@@ -1,0 +1,191 @@
+global:
+  remote:
+    # Refresh token can be defined in env var TA_REFRESH_TOKEN
+    # or under refresh_token field. Traceable agent tries to read
+    # the token defined in refresh_token_file, also.
+    # Precedence of reading refresh token is in following order:
+    # 1. TA_REFRESH_TOKEN (env var)
+    # 2. global.remote.refresh_token
+    # 3. global.remote.refresh_token_file (token defined in file)
+    # refresh_token: "<api-refresh-token>"
+    refresh_token_file: "/etc/traceable/agent/token"
+    endpoint: "api.traceable.ai:443"
+    secure: true
+  logging:
+    level: info
+    encoding: "json"
+    output_paths:
+      - stdout
+    error_output_paths:
+      - stderr
+    encoder_config:
+      time_key: "time"
+      time_encoder: "iso8601"
+      level_key: "level"
+      level_encoder: "uppercase"
+      message_key: "message"
+  server:
+    # Bound to all interfaces on the host
+    endpoint: "0.0.0.0:5441"
+  rest_server:
+    # Bound to all interfaces on the host
+    endpoint: "0.0.0.0:5442"
+  # TLS server. In order to use this you need to supply the certificate and private key paths.
+  # Make sure to mount the files where you want to run this and pass the correct path
+  # For testing there is a key and cert at injector/pkg/injector/testdata/
+  #
+  # tls_server:
+  #   endpoint: "0.0.0.0:5443"
+  #   key_file: "/conf/certs/key.pem"
+  #   cert_file: "/conf/certs/certificate.pem"
+  telemetry:
+    service_name: traceable-agent
+    propagation_formats:
+      - B3
+      - TRACECONTEXT
+    reporting:
+      endpoint: "localhost:4317"
+      trace_reporter_type: "OTLP"
+      opa:
+        endpoint: "http://localhost:8181/"
+        poll_period_seconds: 30
+  persistence_directory: /var/traceable/persistence/
+collector:
+  enabled: true
+  remote_configured_processors:
+    # processors which are to be configured from platform. Comment out to use local configuration.
+    - "traceable_piifilter"
+    - "traceable_protection_mode"
+    - "protectioninspection"
+    - "traceable_enduser"
+  config:
+    extensions:
+      health_check:
+      pprof:
+        endpoint: 0.0.0.0:1777
+      zpages:
+        endpoint: 0.0.0.0:55679
+
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            max_recv_msg_size_mib: 4
+          http:
+
+      opencensus:
+
+      # Collect own metrics
+      prometheus:
+        config:
+          scrape_configs:
+            - job_name: "traceable-collector"
+              scrape_interval: 10s
+              static_configs:
+                - targets: ["0.0.0.0:8888"]
+
+      jaeger:
+        protocols:
+          grpc:
+          thrift_binary:
+          thrift_compact:
+          thrift_http:
+
+      zipkin:
+
+    processors:
+      # Disabled by default.
+      # This processor MUST be configured in the pipeline before the batch processor.
+      groupbytrace:
+        wait_duration: 10s
+        num_traces: 1000000
+      traceable_protection_mode:
+      batch:
+        timeout: 200ms
+        send_batch_size: 8192
+        send_batch_max_size: 10000
+      # Define the TA_ENVIRONMENT environment variable
+      attributes/environment:
+        actions:
+          - key: deployment.environment
+            action: insert
+            value: "${TA_ENVIRONMENT}"
+      traceable_protection_mode_attributes:
+        sampling_percentage: 25
+      # The config body of the pii filter commented out. By default we pull down and use
+      # the pii filter/redaction config set in the platform.
+      traceable_piifilter:
+      # comment out protectioninspection from remote_configured_processors
+      # to use bundled modsec config
+      protectioninspection:
+        config_file: "modsecurity-detector.conf"
+      traceable_protoprocessor:
+        strip_encoded_attribute: true
+      # The config body of the enduser filter is commented out. By default we pull down and use
+      # the enduser config set in the platform.
+      traceable_enduser:
+        end_users:
+
+    exporters:
+      otlp:
+        endpoint: "api.traceable.ai:443"
+        compression: "gzip"
+      prometheus:
+        endpoint: "0.0.0.0:8889"
+        namespace: traceableai
+
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp, opencensus, jaeger, zipkin]
+          processors:
+            [
+              traceable_protection_mode,
+              traceable_protoprocessor,
+              traceable_enduser,
+              traceable_piifilter,
+              protectioninspection,
+              traceable_protection_mode_attributes,
+              attributes/environment,
+              batch,
+            ]
+          exporters: [otlp]
+
+        metrics:
+          receivers: [otlp, opencensus, prometheus]
+          processors: [batch]
+          exporters: [otlp]
+
+      extensions: [health_check, pprof, zpages]
+
+opa:
+  enabled: true
+  log_level: "error"
+agent_manager:
+  enabled: true
+ext_cap:
+  enabled: true
+  service_name: ext_cap
+  blocking_config:
+    enabled: true
+    debug_log: false
+    modsecurity:
+      enabled: true
+    region_blocking:
+      enabled: true
+    remote_config:
+      enabled: true
+      endpoint: "localhost:5441"
+  tmm:
+    # Enabled
+    enabled: true
+    # Path to Unix Domain Socket
+    sock_addr: /var/log/suricata/eve.json
+    # Maximum buffer size to read
+    max_buffer_size: 131072
+    # timeout after 60 seconds (Unix Domain Socket)
+    io_timeout: 60
+    # Stats job runs this often
+    background_stats_wait: 5
+    # maximum size of the in-memory jsondatagram queue
+    max_queue_depth: 5000
